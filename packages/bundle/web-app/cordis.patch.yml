@@ -200,6 +200,7 @@
       config:
         openBrowser: !!js ctx.webStartup.openBrowser
         printUrl: true
+        printQr: !!js ctx.webStartup.lan
         publicUrl: !!js ctx.webStartup.publicUrl
         surfaceContext: true
 

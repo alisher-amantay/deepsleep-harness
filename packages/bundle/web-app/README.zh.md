@@ -36,6 +36,7 @@ kind: "package-bundle"
 ```sh
 dsh --profile web
 dsh --profile web --no-open --port 8080
+dsh --profile web --lan
 ```
 
 启动后你会看到 `dsh web:` 行，其根 URL 携带新的进程 token。除非 `--no-open` 或 SSH 会话抑制，否则默认浏览器会打开该 URL、取得签名 cookie，再重定向到不含认证参数的同一目录。页面加载且你可以与 agent 对话，就说明成功了。两种可预期的失败：前端未构建时，启动会以构建提示停止（checkout 中运行 `pnpm run build`）；浏览器无法打开时，stderr 会打印不含凭据的诊断，但服务器会继续运行——请自行打开已打印的启动 URL。
@@ -48,12 +49,13 @@ dsh --profile web --no-open --port 8080
 
 `minimal` agent preset 使用持久 Shell、`read_image` 工具和固定 persona，支持自动历史压缩以及会话空闲时的 `/compact` 命令。它复用 Host token meter，并拥有隔离的压缩后端。[压缩配置与保留策略](../../compaction/compaction-basic/README.zh.md#use-this-package) 沿用现有后端。图片读取复用 Host 文件系统和附件存储，要求模型支持图片输入；不加载文本读取、写入和编辑工具。
 
-`--host` 与 `--port` 配置监听器；`--tls-cert` 与 `--tls-key` 让它直接提供 HTTPS；`--public-url` 指定 GUI 在剥离前缀的代理之后对外公告的公开 HTTP(S) 根，`--trusted-host` 则添加更多被接受的 authority。这些都在[监听、信任与公开部署](#public-deployments)中说明，而这些 flag 设置的 `tls` 字段记录在[载体的配置](../../../docs/subsystems/web-server.zh.md#config)中：
+`--host` 与 `--port` 配置监听器，`--lan` 为手机或平板绑定本机的网络地址；`--tls-cert` 与 `--tls-key` 让它直接提供 HTTPS；`--public-url` 指定 GUI 在剥离前缀的代理之后对外公告的公开 HTTP(S) 根，`--trusted-host` 则添加更多被接受的 authority。这些都在[监听、信任与公开部署](#public-deployments)中说明，而这些 flag 设置的 `tls` 字段记录在[载体的配置](../../../docs/subsystems/web-server.zh.md#config)中：
 
 | 字段 | 默认值 | 含义 |
 |---|---|---|
 | `openBrowser` | `true` | 启动后用默认浏览器打开；SSH 启动会抑制它 |
 | `printUrl` | `true` | 启动时打印 `dsh web:` URL 行 |
+| `printQr` | `false` | 在 URL 行下方打印登录 URL 的终端二维码；需要 `printUrl`，`--lan` 会设置它 |
 | `surfaceContext` | `true` | 把 `DSH_WEB_URL` 暴露给 agent 的 shell 命令 |
 | `publicUrl` | 未设置 | 对外公告的 HTTP(S) 应用根；否则公告绑定地址 URL |
 
@@ -62,9 +64,18 @@ dsh --profile web --no-open --port 8080
 <a id="public-deployments"></a>
 ### 监听、信任与公开部署
 
-默认情况下 GUI 只监听 loopback，只接受本机的连接。只有 `--host` 会改变监听器：它接受一个具体的本机 IPv4 或 IPv6 地址，不接受通配地址。未启用 TLS 的非 loopback 监听器提供明文 HTTP，并在启动时警告，即使前置 HTTPS 的 `--public-url` 也不例外。Host/Origin 栅栏接受绑定 IP 本身；其他非 loopback authority 需要 `--trusted-host`，因此远端浏览器要么经由剥离前缀的代理访问 GUI，要么通过以可信主机名呈现的端口转发客户端访问。启动 token 交换与签名会话 cookie 认证每个 API 方法与 WebSocket 流。
+默认情况下 GUI 只监听 loopback，只接受本机的连接。只有 `--host` 与 [`--lan`](#lan) 会改变监听地址：二者都只接受一个具体的本机 IPv4 或 IPv6 地址，不接受通配地址。未启用 TLS 的非 loopback 监听器提供明文 HTTP，并在启动时警告，即使前置 HTTPS 的 `--public-url` 也不例外。Host/Origin 栅栏接受绑定 IP 本身；其他非 loopback authority 需要 `--trusted-host`，因此远端浏览器要么经由剥离前缀的代理访问 GUI，要么通过以可信主机名呈现的端口转发客户端访问。启动 token 交换与签名会话 cookie 认证每个 API 方法与 WebSocket 流。
 
 同时传入 `--tls-cert` 与 `--tls-key`，监听器便以 HTTPS 而非明文 HTTP 提供服务。两者各指定一个相对进程工作目录解析的文件：证书文件包含完整证书链，密钥文件为不带口令的 PEM 私钥。它们属于同一个设置——只提供一个会报用法错误，两个都不提供则保持明文 HTTP 默认值。文件缺失、不可读、为空，或不是有效的证书与密钥对时启动失败；绝不回退到 HTTP。监听器运行期间不会重新读取这些材料，因此更换证书需要重新加载监听器或重启进程。DSH 不签发、不续期也不监视任何证书：没有 ACME 客户端、没有自签名兜底，也没有重定向监听器。浏览器使用自己的信任库与主机名匹配，因此浏览器不信任的证书，或其 subject alternative name 未覆盖你所访问 authority 的证书，会在页面加载前失败。默认端口仍为 3080，且 `--tls-cert`/`--tls-key` 不跟随 `--public-url`：监听器的证书覆盖浏览器实际访问的 authority。TLS 不改变授权模型：Connection 仍认证每个请求并仍校验 Host/Origin，且只要接收请求的监听器提供 HTTPS，它所签发的会话 cookie 就带 `Secure`。
+
+<a id="lan"></a>
+#### 同一网络中的手机与平板
+
+`dsh --profile web --lan` 绑定物理网络接口上唯一的私有 IPv4 地址（10/8、172.16/12 或 192.168/16），跳过 loopback 以及 VPN 隧道、网桥、容器网络等虚拟接口。没有这样的地址或剩下多个时，启动以用法错误退出并列出候选地址；此时用 `--lan <address>` 指定一个本机地址，它也可以不在私有网段内，例如 Tailscale 的 `100.x` 地址。`--lan` 与 `--host` 都选择绑定地址，因此同时传入二者是用法错误。浏览器信任栅栏接受绑定地址本身，因此不需要 `--trusted-host`。
+
+在明文 HTTP 警告与 `dsh web:` 登录 URL 下方，启动会打印“持有该链接的任何人都能控制本机”的警告，随后是同一 URL 的二维码。用手机相机扫描，或在手机上打开该 URL。URL 中的 token 是进程级启动 token：每次启动都会更换，DSH 不保存 LAN 密码或长期 bearer token。交换 token 会设置一个 `HttpOnly`、`SameSite=Strict` 的会话 cookie，它由 `$DSH_HOME/.credentials.yaml` 中的持久密钥签名，因此手机在 cookie 过期前（30 天，即 connection 行的 `cookieMaxAgeDays`）跨重启保持登录；cookie 绑定你所打开的地址，因此换用其他 `--lan` 地址或端口需要重新扫描。未传 `--no-open` 时，桌面浏览器也会打开该网络 URL。
+
+GUI 页面、每个 API 请求与每次 WebSocket 升级都需要该 cookie，而静态客户端资源保持公开且不携带凭据；每个已认证请求都必须在 `Host` 中、以及存在时在 `Origin` 中写明监听器自身的地址，因此其他站点的页面无法操控 GUI。非 loopback 监听器在没有浏览器认证时拒绝启动：connection 行被禁用或加载失败时，启动以 `web-app: refusing to serve <address> without browser authentication` 退出，退出码为 1。除非提供 `--tls-cert`/`--tls-key`，LAN 链路是明文 HTTP，网络中的其他设备可以读取流量；只在可信网络上使用 `--lan`。停止进程会关闭端口，但持有 cookie 的手机只要在 cookie 过期前遇到 GUI 再次服务同一地址与端口，就会重新获准访问。
 
 容器可以绑定其 Pod 地址，并公告前置的 ingress：
 

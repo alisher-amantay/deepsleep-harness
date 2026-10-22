@@ -36,6 +36,7 @@ Start the GUI, open your browser, and start talking to the agent. The flags fine
 ```sh
 dsh --profile web
 dsh --profile web --no-open --port 8080
+dsh --profile web --lan
 ```
 
 After startup you see a `dsh web:` line whose root URL carries a fresh process token. Unless `--no-open` or an SSH session suppresses it, the default browser opens that URL, receives a signed cookie, and redirects to the same directory without the token. You know it worked when the page loads and you can chat with the agent. Two failures to expect: if the frontend is not built, startup stops with a build hint (`pnpm run build` in a checkout); if the browser cannot be opened, a credential-free diagnostic prints to stderr while the server keeps running — open the printed startup URL yourself.
@@ -48,12 +49,13 @@ Saved model selections override the composition default. The settings card accep
 
 The `minimal` agent preset uses a persistent shell, the `read_image` tool, and a fixed persona, with automatic history compaction and the idle-session `/compact` command. It shares the Host token meter and owns an isolated compaction backend. [Compaction configuration and retention](../../compaction/compaction-basic/README.md#use-this-package) follow the existing backend. Image reads reuse the Host filesystem and attachment store and require an image-capable model; text read, write, and edit tools remain excluded.
 
-`--host` and `--port` configure the listener; `--tls-cert` and `--tls-key` make it serve HTTPS; `--public-url` names the advertised public HTTP(S) root the GUI is reached at behind a prefix-stripping proxy, and `--trusted-host` adds further accepted authorities. All are described under [Listening, trust, and public deployments](#public-deployments), and the `tls` field those flags set is documented with the [carrier's config](../../../docs/subsystems/web-server.md#config):
+`--host` and `--port` configure the listener, and `--lan` binds this machine's network address for a phone or tablet; `--tls-cert` and `--tls-key` make it serve HTTPS; `--public-url` names the advertised public HTTP(S) root the GUI is reached at behind a prefix-stripping proxy, and `--trusted-host` adds further accepted authorities. All are described under [Listening, trust, and public deployments](#public-deployments), and the `tls` field those flags set is documented with the [carrier's config](../../../docs/subsystems/web-server.md#config):
 
 | Field | Default | Meaning |
 |---|---|---|
 | `openBrowser` | `true` | Open the default browser after startup; SSH launches suppress it |
 | `printUrl` | `true` | Print the `dsh web:` URL line at startup |
+| `printQr` | `false` | Print a terminal QR code of the login URL under the URL line; requires `printUrl`, and `--lan` sets it |
 | `surfaceContext` | `true` | Expose `DSH_WEB_URL` to the agent's shell commands |
 | `publicUrl` | Unset | Advertised HTTP(S) application root; otherwise announce the bind-address URL |
 
@@ -62,9 +64,18 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
 <a id="public-deployments"></a>
 ### Listening, trust, and public deployments
 
-By default the GUI listens on loopback and accepts connections from this machine only. Only `--host` changes the listener: it accepts one concrete local IPv4 or IPv6 address, never a wildcard. A non-loopback listener without TLS serves plain HTTP and warns at startup, even when an HTTPS `--public-url` fronts it. The Host/Origin fence accepts the bind IP itself; other non-loopback authorities require `--trusted-host`, so a remote browser reaches the GUI behind a prefix-stripping proxy or through a port-forwarding client that presents a trusted hostname. The launch-token exchange and signed session cookie authenticate every API method and WebSocket stream.
+By default the GUI listens on loopback and accepts connections from this machine only. Only `--host` and [`--lan`](#lan) change the listener address: each accepts one concrete local IPv4 or IPv6 address, never a wildcard. A non-loopback listener without TLS serves plain HTTP and warns at startup, even when an HTTPS `--public-url` fronts it. The Host/Origin fence accepts the bind IP itself; other non-loopback authorities require `--trusted-host`, so a remote browser reaches the GUI behind a prefix-stripping proxy or through a port-forwarding client that presents a trusted hostname. The launch-token exchange and signed session cookie authenticate every API method and WebSocket stream.
 
 Pass `--tls-cert` and `--tls-key` together to serve HTTPS from the listener instead of plain HTTP. Each names a file resolved against the process working directory: the certificate file holds the full chain and the key file an unencrypted PEM private key. The flags are one setting — supplying only one is a usage error, and supplying neither keeps the plain-HTTP default. Startup fails when a file is missing, unreadable, empty, or not a valid certificate-and-key pair; it never falls back to HTTP. Nothing re-reads the material while the listener runs, so serving a different certificate needs a listener reload or a process restart. DSH issues, renews, and watches nothing: there is no ACME client, no self-signed fallback, and no redirect listener. The browser applies its own trust store and host-name matching, so a certificate the browser does not trust, or one whose subject alternative names miss the authority you open, fails before the page loads. The default port stays 3080, and `--tls-cert`/`--tls-key` do not follow `--public-url`: the listener's certificate covers the authority browsers dial. TLS changes nothing about authority: Connection still authenticates every request and still checks Host/Origin, and the session cookie it mints is `Secure` whenever the receiving listener serves HTTPS.
+
+<a id="lan"></a>
+#### Phones and tablets on the same network
+
+`dsh --profile web --lan` binds the one private IPv4 address (10/8, 172.16/12, or 192.168/16) of a physical network interface, skipping loopback and virtual interfaces such as VPN tunnels, bridges, and container networks. When no such address or several remain, startup exits with a usage error that lists the candidates; `--lan <address>` then names one local address, which may also be outside the private ranges, such as a Tailscale `100.x` address. `--lan` and `--host` both choose the bind address, so passing both is a usage error. The browser-trust fence accepts the bind address itself, so no `--trusted-host` is needed.
+
+Below the plain-HTTP warning and the `dsh web:` login URL, startup prints a warning that anyone holding the link controls this machine, followed by a QR code of the same URL. Scan it with the phone camera or open the URL on the phone. The token in the URL is the per-process launch token: it changes on every start, and DSH stores no LAN password or long-lived bearer token. Exchanging it sets an `HttpOnly`, `SameSite=Strict` session cookie signed with the durable secret in `$DSH_HOME/.credentials.yaml`, so a phone stays signed in across restarts until the cookie expires (30 days, the connection row's `cookieMaxAgeDays`); the cookie is bound to the address you opened, so a different `--lan` address or port needs a new scan. Without `--no-open` the desktop browser also opens the network URL.
+
+The GUI page, every API request, and every WebSocket upgrade need that cookie, while static client assets stay public and carry no credential; each authenticated request must name the listener's own address in `Host` and, when present, in `Origin`, so a page from another site cannot drive the GUI. A non-loopback listener refuses to start without browser authentication: when the connection row is disabled or fails to load, startup exits 1 with `web-app: refusing to serve <address> without browser authentication`. The LAN leg is plain HTTP unless `--tls-cert`/`--tls-key` are given, so other devices on the network can read the traffic; use `--lan` only on networks you trust. Stopping the process closes the port, but a phone that holds a cookie is admitted again whenever the GUI serves the same address and port before the cookie expires.
 
 A container can bind its Pod address and advertise the ingress that fronts it:
 

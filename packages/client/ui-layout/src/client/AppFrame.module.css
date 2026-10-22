@@ -63,6 +63,10 @@
 }
 
 .centerCol {
+  /* Explicit placement: the compact drawer takes the sidebar column out of
+     flow, and auto-placement would then drop the centre into the 0px track. */
+  grid-row: 1;
+  grid-column: 2;
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -265,12 +269,15 @@
  * where it is. The occupant draws its own left border.
  */
 .rightbarCol {
+  grid-row: 1;
+  grid-column: 3;
   position: relative;
   min-width: 0;
   overflow: visible;
 }
 
 .bottomRow {
+  grid-row: 2;
   grid-column: 1 / -1;
   min-width: 0;
   min-height: 0;
@@ -287,4 +294,63 @@
 
 .overlayLayer > * {
   pointer-events: auto;
+}
+
+/*
+ * Compact frame (phones, below COMPACT_MAX in columns.ts): the sidebar column
+ * has a 0px track and the sidebar becomes an overlay drawer that slides in
+ * from the left over a scrim. The drawer keeps its own transform transition
+ * because compact open/close never eases the grid tracks.
+ */
+.frame[data-compact] .sidebarCol {
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  z-index: 19;
+  width: var(--dsh-frame-drawer-width);
+  box-sizing: border-box;
+  border-right: none;
+  box-shadow: var(--dsw-shadow-lv3);
+  transform: translateX(-100%);
+  visibility: hidden;
+  transition:
+    transform var(--ds-transition-duration-slow) var(--ds-ease-in-out),
+    visibility 0s linear var(--ds-transition-duration-slow);
+}
+
+.frame[data-compact][data-drawer-open] .sidebarCol {
+  transform: none;
+  visibility: visible;
+  transition: transform var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+
+/* Fills the frame beside the open drawer; a tap closes the drawer. */
+.drawerScrim {
+  position: absolute;
+  inset: 0;
+  z-index: 18;
+  background: var(--dsw-alias-bg-mask-1);
+  touch-action: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .frame[data-compact] .sidebarCol,
+  .frame[data-compact][data-drawer-open] .sidebarCol {
+    transition: none;
+  }
+}
+
+/* The closed compact drawer leaves only the shell.leading controls. Without
+   traffic lights they sit like the macOS fullscreen seat
+   (12 + 28 + 8 + 28 + 8); a compact macOS window keeps the darwin rules. */
+:global(html:not([data-platform='darwin'])) .frame[data-compact] .leadingSeat {
+  left: 12px;
+}
+
+:global(html:not([data-platform='darwin'])) .frame[data-compact][data-sidebar-collapsed] {
+  --dsh-frame-leading-clearance: 84px;
+}
+
+:global([data-platform='darwin']) .frame[data-compact] .centerCol {
+  border-left: none;
 }

@@ -21,6 +21,13 @@ export const SIDEBAR_COLLAPSED = 56
  * LG breakpoint); a manual toggle below it re-expands over the squeezed center
  * (stores.ts narrowExpanded). */
 export const SIDEBAR_AUTO_COLLAPSE = 1024
+/** Viewport width below which the frame is compact (phones): the sidebar has
+ * no grid track and opens as an overlay drawer. Matches the right panel's
+ * automatic fullscreen breakpoint (ui-sidebar-right). */
+export const COMPACT_MAX = 768
+/** Maximum compact drawer width as a fraction of the frame, so a strip of the
+ * scrim stays tappable beside the open drawer. */
+export const DRAWER_MAX_RATIO = 0.85
 /** Right column drag clamp floor. */
 export const RIGHTBAR_MIN = 300
 /** Maximum normal right panel width as a fraction of the frame. */

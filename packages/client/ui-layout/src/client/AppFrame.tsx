@@ -19,8 +19,11 @@ import type { ReactNode } from 'react'
 import type {
   PropsLocale, PropsRenderSlots, PropsRuntime, PropsStore,
 } from '@deepseek-ai/dsh-client-ui-slots'
-import { CENTER_MIN, clampWidth, computeColumns, RIGHTBAR_DEFAULT_RATIO, RIGHTBAR_MAX_RATIO, RIGHTBAR_MIN, SIDEBAR_AUTO_COLLAPSE, SIDEBAR_COLLAPSED, SIDEBAR_DEFAULT } from './columns.ts'
-import { DocumentTitle } from './DocumentTitle.tsx'
+import {
+  CENTER_MIN, clampWidth, COMPACT_MAX, computeColumns, DRAWER_MAX_RATIO, RIGHTBAR_DEFAULT_RATIO, RIGHTBAR_MAX_RATIO, RIGHTBAR_MIN,
+  SIDEBAR_AUTO_COLLAPSE, SIDEBAR_COLLAPSED, SIDEBAR_DEFAULT, SIDEBAR_MAX, SIDEBAR_MIN,
+} from './columns.ts'
+import { DocumentTitle, mainViewSessionId } from './DocumentTitle.tsx'
 import type { createLayoutStore } from './stores.ts'
 import css from './AppFrame.module.css'
 
@@ -117,6 +120,21 @@ function DragHandle(props: { side: 'sidebar' | 'rightbar'; left: number; onStart
   )
 }
 
+/**
+ * Mounted only while the compact drawer is open: closes it when the user
+ * navigates (a different Session takes the main view or a global panel opens),
+ * so picking a destination in the drawer reveals it.
+ */
+function DrawerNavigationWatch({ useSessions, usePanelInfo, onNavigate }: Pick<PropsRuntime<'root'>, 'useSessions' | 'usePanelInfo'> & { onNavigate: () => void }): null {
+  const panelId = usePanelInfo(info => info.activePanelId)
+  const sessionId = useSessions(mainViewSessionId)
+  const opened = useRef({ panelId, sessionId })
+  useEffect(() => {
+    if (opened.current.panelId !== panelId || opened.current.sessionId !== sessionId) onNavigate()
+  }, [panelId, sessionId, onNavigate])
+  return null
+}
+
 /** The three-column frame (see module doc). */
 export function AppFrame({
   useStore,
@@ -166,12 +184,22 @@ export function AppFrame({
   // Desktop reopen controls occupy the frame's shell.leading seat (macOS) or
   // the Windows caption row; neither platform keeps an icon rail.
   const darwin = document.documentElement.dataset.platform === 'darwin'
-  const collapsedWidth = darwin
+  // A compact (phone) frame gives the sidebar no track at all: the closed
+  // sidebar is hidden like the macOS collapse, and the open one is an overlay
+  // drawer over the centre instead of a column that squeezes it.
+  const compact = viewport < COMPACT_MAX
+  const drawerOpen = compact && !sidebarCollapsed
+  const collapsedWidth = darwin || compact
     || document.documentElement.hasAttribute('data-windows-titlebar') ? 0 : SIDEBAR_COLLAPSED
+  const trackPreference = compact ? 0 : sidebarPreference
+  const drawerWidth = Math.round(Math.min(
+    clampWidth(layoutInfo.sidebar === 0 ? SIDEBAR_DEFAULT : layoutInfo.sidebar, SIDEBAR_MIN, SIDEBAR_MAX),
+    viewport * DRAWER_MAX_RATIO,
+  ))
   // Opening on a narrow frame collapses the left sidebar. Eligibility must
   // include that space before the occupant's first shown report arrives.
-  const normal = computeColumns(viewport, !layoutInfo.rightbarShown && narrow ? 0 : sidebarPreference, rightbarPreference, collapsedWidth)
-  const cols = computeColumns(viewport, sidebarPreference, layoutInfo.rightbarTrack ? rightbarPreference : 0, collapsedWidth)
+  const normal = computeColumns(viewport, !layoutInfo.rightbarShown && narrow ? 0 : trackPreference, rightbarPreference, collapsedWidth)
+  const cols = computeColumns(viewport, trackPreference, layoutInfo.rightbarTrack ? rightbarPreference : 0, collapsedWidth)
   const colsRef = useRef(cols)
   colsRef.current = cols
   const rightbarWidth = useRef(normal.rightbar)
@@ -239,21 +267,32 @@ export function AppFrame({
   // whole and was corrected two frames later — visible jitter. cols keeps only
   // the discrete decisions (track present, collapse state) and the drag base.
   const rightbarMax = cols.rightbar === 0 ? 0 : clampWidth(rightbarPreference, RIGHTBAR_MIN, viewport * RIGHTBAR_MAX_RATIO)
+  const sidebarWidth = compact ? drawerWidth : cols.sidebar
   const sidebar = useMemo(() => renderSlot('sidebar', {
     collapsed: sidebarCollapsed,
-    width: cols.sidebar,
-  }), [renderSlot, sidebarCollapsed, cols.sidebar])
+    width: sidebarWidth,
+  }), [renderSlot, sidebarCollapsed, sidebarWidth])
   const main = useMemo(() => (
     <MainPanel usePanelInfo={usePanelInfo} renderSlot={renderSlot} />
   ), [usePanelInfo, renderSlot])
   const overlays = useMemo(() => renderSlot('shell.overlay', {}), [renderSlot])
-  // Window-chrome seat over the main panels' top-left corner: only a fully
-  // hidden sidebar column on macOS desktop leaves window chrome without a
-  // home — the Windows zero-width collapse keeps its controls in the caption
-  // row (ui-sidebar). AppFrame.module.css publishes the matching
-  // --dsh-frame-leading-clearance under the same collapsed condition.
+  // Window-chrome seat over the main panels' top-left corner: a fully hidden
+  // sidebar column on macOS desktop or a closed compact drawer leaves the
+  // reopen controls without a home — the Windows zero-width collapse keeps
+  // its controls in the caption row (ui-sidebar). AppFrame.module.css
+  // publishes the matching --dsh-frame-leading-clearance under the same
+  // collapsed condition.
   const leading = useMemo(() => renderSlot('shell.leading', {}), [renderSlot])
-  const leadingMounted = darwin && sidebarCollapsed
+  const leadingMounted = (darwin || compact) && sidebarCollapsed
+  const closeDrawer = useCallback(() => { actions.toggleSidebar() }, [actions])
+  useEffect(() => {
+    if (!drawerOpen) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !event.defaultPrevented) closeDrawer()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => { window.removeEventListener('keydown', onKeyDown) }
+  }, [drawerOpen, closeDrawer])
 
   return (
     <div
@@ -262,10 +301,13 @@ export function AppFrame({
       style={{
         ...(document.documentElement.hasAttribute('data-windows-titlebar')
           ? { '--dsh-windows-sidebar-width': `${cols.sidebar}px` } : {}),
+        ...(compact ? { '--dsh-frame-drawer-width': `${drawerWidth}px` } : {}),
         gridTemplateColumns:
           `${cols.sidebar}px minmax(${cols.rightbar === 0 ? 0 : CENTER_MIN}px, 1fr) minmax(0px, ${rightbarMax}px)`,
       }}
       data-sidebar-collapsed={sidebarCollapsed || undefined}
+      data-compact={compact || undefined}
+      data-drawer-open={drawerOpen || undefined}
       data-rightbar-collapsed={cols.rightbar === 0 || undefined}
       data-rightbar-fullscreen={layoutInfo.rightbarFullscreen || undefined}
       data-rightbar-instant={layoutInfo.rightbarInstant || undefined}
@@ -277,9 +319,15 @@ export function AppFrame({
         useSessions={useSessions}
         usePanelInfo={usePanelInfo}
       />
-      <div className={css.sidebarCol}>
+      <div className={css.sidebarCol} data-shell-sidebar>
         {sidebar}
       </div>
+      {drawerOpen && (
+        <>
+          <div className={css.drawerScrim} data-shell-drawer-scrim aria-hidden="true" onClick={closeDrawer} />
+          <DrawerNavigationWatch useSessions={useSessions} usePanelInfo={usePanelInfo} onNavigate={closeDrawer} />
+        </>
+      )}
       <>
         <CenterColumn>{main}</CenterColumn>
         <RightbarColumn>
@@ -298,7 +346,7 @@ export function AppFrame({
         </div>
       )}
       {/* The collapsed rail is fixed-width: no resize handle while closed. */}
-      {!sidebarCollapsed && <DragHandle side="sidebar" left={cols.sidebar} onStart={onSidebarStart} onDrag={onSidebarDrag} onEnd={onDragEnd} />}
+      {!sidebarCollapsed && !compact && <DragHandle side="sidebar" left={cols.sidebar} onStart={onSidebarStart} onDrag={onSidebarDrag} onEnd={onDragEnd} />}
       {layoutInfo.rightbarShown && !layoutInfo.rightbarFullscreen && normal.rightbar > 0 && (
         <DragHandle side="rightbar" left={viewport - normal.rightbar} onStart={onRightbarStart} onDrag={onRightbarDrag} onEnd={onDragEnd} />
       )}

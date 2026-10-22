@@ -232,6 +232,60 @@
   overflow-y: auto;
 }
 
+/* Phone widths (below the shell's 768px compact breakpoint): the panel fills
+   the viewport, the navigation becomes a horizontally scrolling tab strip under
+   the title, and the header actions pin to the top-right corner so the options
+   column keeps the full width. */
+@media (max-width: 767px) {
+  .overlay {
+    align-items: stretch;
+  }
+
+  .panel {
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    border-radius: 0;
+  }
+
+  .nav {
+    width: auto;
+    gap: 12px;
+    padding: 16px 12px 8px;
+  }
+
+  .navTitle {
+    padding-right: 48px;
+  }
+
+  .navList {
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .navCell {
+    flex: none;
+  }
+
+  .content {
+    min-height: 0;
+  }
+
+  .header {
+    position: absolute;
+    top: 14px;
+    right: 12px;
+    height: auto;
+    padding: 0;
+  }
+
+  .options {
+    padding: 8px 16px 24px;
+  }
+}
+
 /* Visually-hidden text seat (close button accessible name from slot content). */
 .hiddenLabel {
   position: absolute;

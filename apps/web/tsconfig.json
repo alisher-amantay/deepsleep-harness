@@ -159,6 +159,7 @@
     "tests/user-text-secret-mask.e2e.ts",
     "tests/reference-composer.e2e.ts",
     "tests/markdown-wide-table.e2e.ts",
+    "tests/mobile-layout.e2e.ts",
     "tests/thinking-markdown.e2e.ts",
     "tests/math-rendering.e2e.ts",
     "tests/markdown-cjk-strong.e2e.ts",
