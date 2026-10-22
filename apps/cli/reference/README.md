@@ -35,7 +35,7 @@ The shipped apps own these command lines:
 
 | Profile | Arguments |
 |---|---|
-| `web` | `--host`, `--port`, `--tls-cert`, `--tls-key`, `--public-url`, repeatable `--trusted-host`, `--no-open` |
+| `web` | `--host`, `--lan`, `--port`, `--tls-cert`, `--tls-key`, `--public-url`, repeatable `--trusted-host`, `--no-open` |
 | `headless` | the task text, as the positional argument |
 | `sdk` | no options; stdio carries the JSON-RPC protocol |
 | `sdk-minimal` | no options; stdio carries the same JSON-RPC protocol |
@@ -109,6 +109,8 @@ Git-hosted plugins that ship sources build during install through their `prepare
 `dsh web` uses the profile shorthand. Launcher flags are parsed first; the remaining flags belong to the web app, whose ordinary bundle provider parses them. `--host` and `--port` override the composed listener values, and `--tls-cert`/`--tls-key` set the listener's `tls` pair. The host must name one concrete local address, not a wildcard (`--host 0.0.0.0` exits with a usage error); `hostname -i` may list several, so pass one. Repeatable `--trusted-host` values are collected in `ctx.webStartup.trustedHosts`; a deployment expression may add its own authorities. `--no-open` disables the default-browser handoff for this invocation. The client-plugin HMR receiver is always mounted and stays idle until `pnpm run dev:web` rebuilds client bundles; that command builds once, starts this same launcher, and keeps client bundles rebuilt, or with `--no-serve` runs only the watchers beside a `dsh web` started elsewhere.
 
 `--public-url <url>` advertises one HTTP(S) application root — with an optional forwarding prefix — in place of the listener's bind-address URL (loopback for a loopback bind). It grants no trust, so the browser-visible authority still has to be named with `--trusted-host`; [Publish the Web UI behind a reverse proxy](../../../docs/user/guide/public-deployments.md) lists what the proxy in front must provide.
+
+`--lan [address]` binds this machine's one private IPv4 address on a physical interface, or the named local address, in place of `--host`, and prints a QR code of the login URL for a phone or tablet on the same network; it conflicts with `--host`. [Phones and tablets on the same network](../../../packages/bundle/web-app/README.md#lan) describes address selection, sign-in, and the authentication requirement.
 
 `--tls-cert <file>` and `--tls-key <file>` make the listener serve HTTPS in place of plain HTTP. They are one setting: both or neither, and each names a file resolved against the process working directory. The certificate file holds the full chain, including intermediates; the key file holds an unencrypted PEM private key. A missing, unreadable, empty, or invalid pair fails startup, which never falls back to HTTP, and a replacement pair takes effect only after a listener reload or a process restart because the carrier reads the files once and nothing obtains, renews, or watches certificates. HTTPS also grants no trust: the browser must trust the certificate and open an authority its names cover, Connection still authenticates each request and checks Host/Origin, and the session cookie is `Secure` because the receiving listener serves HTTPS. The default port stays 3080, and `--public-url` remains an independent advertisement.
 

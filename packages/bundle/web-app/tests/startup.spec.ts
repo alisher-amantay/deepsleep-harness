@@ -4,15 +4,31 @@
  */
 
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { networkInterfaces, tmpdir, type NetworkInterfaceInfo } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import Include from '@deepseek-ai/cordis-plugin-include'
 import { internals, provideCmdline } from '@deepseek-ai/dsh-cmdline'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { apply, WEB_STARTUP_SERVICE, type WebStartupValues } from '../src/startup.ts'
+
+vi.mock('node:os', async (importOriginal) => {
+  const os = await importOriginal<typeof import('node:os')>()
+  return { ...os, networkInterfaces: vi.fn(os.networkInterfaces) }
+})
+
+/**
+ * Replace the host's interface table for one bare `--lan` detection.
+ * @param table - interface name to IPv4 addresses, with `internal` marking loopback.
+ */
+function stubInterfaces(table: Record<string, { address: string; internal?: boolean; family?: 'IPv4' | 'IPv6' }[] | undefined>): void {
+  vi.mocked(networkInterfaces).mockReturnValueOnce(Object.fromEntries(Object.entries(table).map(([iface, infos]) => [
+    iface,
+    infos?.map(({ address, internal = false, family = 'IPv4' }) => ({ address, internal, family }) as NetworkInterfaceInfo),
+  ])))
+}
 
 /** What one fixture boot observed. */
 interface Observed {
@@ -61,6 +77,7 @@ export const apply = ctx => globalThis.__webStartupApply(ctx)
     `  inject: [${WEB_STARTUP_SERVICE}]`,
     '  config:',
     "    host: !!js ctx.webStartup.host ?? '127.0.0.1'",
+    '    lan: !!js ctx.webStartup.lan',
     '    openBrowser: !!js ctx.webStartup.openBrowser',
     '    port: !!js ctx.webStartup.port ?? 3080',
     '    publicUrl: !!js ctx.webStartup.publicUrl',
@@ -106,6 +123,7 @@ describe('web command-line provider', () => {
     ])
     expect(values).toEqual({
       host: '127.0.0.1',
+      lan: false,
       openBrowser: false,
       port: 8080,
       trustedHosts: ['lab.internal', 'lab-2.internal', '10.0.0.9'],
@@ -127,9 +145,10 @@ describe('web command-line provider', () => {
 
   it('leaves deployment values to each consumer when flags omit them', async () => {
     const { values, observed } = await bootProvider([])
-    expect(values).toEqual({ openBrowser: true, trustedHosts: [] })
+    expect(values).toEqual({ lan: false, openBrowser: true, trustedHosts: [] })
     expect(observed.readerConfig).toEqual({
       host: '127.0.0.1',
+      lan: false,
       openBrowser: true,
       port: 3080,
       trustedHosts: [],
@@ -161,12 +180,14 @@ describe('web command-line provider', () => {
       '--trusted-host', 'lab.internal',
     ])
     expect(values).toEqual({
+      lan: false,
       openBrowser: true,
       publicUrl: 'https://web.example/ui',
       trustedHosts: ['lab.internal'],
     })
     expect(observed.readerConfig).toEqual({
       host: '127.0.0.1',
+      lan: false,
       openBrowser: true,
       port: 3080,
       publicUrl: 'https://web.example/ui',
@@ -191,5 +212,73 @@ describe('web command-line provider', () => {
     expect(values).toBeUndefined()
     expect(observed.readerConfig).toBeUndefined()
     expect(observed.exits).toEqual([1])
+  })
+})
+
+describe('web command-line provider --lan', () => {
+  it('binds the one private IPv4 address of a physical interface', async () => {
+    stubInterfaces({
+      lo0: [{ address: '127.0.0.1', internal: true }],
+      en0: [{ address: '192.168.0.174' }, { address: 'fe80::1', family: 'IPv6' }],
+      en1: [{ address: '100.64.0.3' }],
+      bridge100: [{ address: '192.168.64.1' }],
+      utun4: [{ address: '10.8.0.2' }],
+    })
+    const { values, observed } = await bootProvider(['--lan', '--no-open'])
+    expect(values).toEqual({ host: '192.168.0.174', lan: true, openBrowser: false, trustedHosts: [] })
+    expect(observed.readerConfig).toMatchObject({ host: '192.168.0.174', lan: true })
+    expect(observed.exits).toEqual([])
+  })
+
+  it.each([
+    ['172.16.4.2'],
+    ['10.0.0.9'],
+  ])('accepts private range address %s', async (address) => {
+    stubInterfaces({ eth0: [{ address }] })
+    const { values } = await bootProvider(['--lan'])
+    expect(values).toMatchObject({ host: address, lan: true })
+  })
+
+  it('names every candidate when several private addresses remain', async () => {
+    stubInterfaces({ en0: [{ address: '192.168.0.174' }], en7: [{ address: '10.0.0.9' }] })
+    const { values, observed } = await bootProvider(['--lan'])
+    expect(observed.out).toContain('error: --lan found several private IPv4 addresses: 192.168.0.174 (en0), 10.0.0.9 (en7); pass --lan <address> to choose one')
+    expect(values).toBeUndefined()
+    expect(observed.readerConfig).toBeUndefined()
+    expect(observed.exits).toEqual([1])
+  })
+
+  it('reports a host with no private physical address', async () => {
+    stubInterfaces({ lo0: [{ address: '127.0.0.1', internal: true }], en0: [{ address: '172.32.0.1' }, { address: '192.169.0.1' }], en1: undefined })
+    const { values, observed } = await bootProvider(['--lan'])
+    expect(observed.out).toContain('error: --lan found no private IPv4 address on a physical interface')
+    expect(values).toBeUndefined()
+    expect(observed.exits).toEqual([1])
+  })
+
+  it('binds an explicitly named address without range checks', async () => {
+    const { values, observed } = await bootProvider(['--lan', '100.101.102.103'])
+    expect(values).toEqual({ host: '100.101.102.103', lan: true, openBrowser: true, trustedHosts: [] })
+    expect(observed.exits).toEqual([])
+  })
+
+  it('refuses a wildcard --lan address', async () => {
+    const { values, observed } = await bootProvider(['--lan', '0.0.0.0'])
+    expect(observed.out).toContain('error: --lan 0.0.0.0 is an unspecified (wildcard) address')
+    expect(values).toBeUndefined()
+    expect(observed.exits).toEqual([1])
+  })
+
+  it('refuses --lan together with --host', async () => {
+    const { values, observed } = await bootProvider(['--lan', '--host', '127.0.0.1'])
+    expect(observed.out).toContain('error: --lan and --host both choose the bind address; pass only one')
+    expect(values).toBeUndefined()
+    expect(observed.readerConfig).toBeUndefined()
+    expect(observed.exits).toEqual([1])
+  })
+
+  it('documents --lan in help', async () => {
+    const { observed } = await bootProvider(['--help'])
+    expect(observed.out).toContain('--lan [address]')
   })
 })

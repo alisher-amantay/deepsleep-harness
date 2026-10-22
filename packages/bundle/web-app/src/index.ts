@@ -7,7 +7,9 @@
  * bash-visible web runtime variable, the process-token URL line, and the
  * default-browser handoff, and provides the `webApp` service. An advertised
  * `publicUrl` replaces the published bind-address URL. Non-loopback
- * HTTP binds trigger an exposure warning. App command-line values arrive
+ * HTTP binds trigger an exposure warning, and a non-loopback tree that settles
+ * without browser authentication fails loud. `printQr` adds a terminal QR code
+ * of the login URL for phones. App command-line values arrive
  * through the `webStartup` service expressions in the bundle patch.
  * @module @deepseek-ai/dsh-web-app
  */
@@ -25,6 +27,7 @@ import { launchedThroughSsh, launchEnvironmentOf } from '@deepseek-ai/dsh-launch
 import { scrubbedParentEnv } from '@deepseek-ai/dsh-subprocess'
 import type {} from '@deepseek-ai/cordis-plugin-loader'
 import type {} from '@deepseek-ai/dsh-shell-env'
+import { renderUnicodeCompact } from 'uqr'
 import { parsePublicUrl } from './public-url.ts'
 
 /** The Web GUI this process serves, provided by the `web-runtime` row. */
@@ -58,6 +61,11 @@ export interface Config {
   /** Print the URL line on activation; a non-interactive layer can turn it off. */
   printUrl: boolean
   /**
+   * Print a terminal QR code of the login URL under the URL line, so a phone
+   * camera can open it. Requires `printUrl`; `dsh --profile web --lan` sets it.
+   */
+  printQr: boolean
+  /**
    * Register the `DSH_WEB_URL` bash variable naming this GUI. A one-shot
    * non-interactive layer can turn it off when its user is not in the GUI.
    */
@@ -75,6 +83,7 @@ export interface Config {
 export const Config: z<Config> = z.object({
   openBrowser: z.boolean().default(true),
   printUrl: z.boolean().default(true),
+  printQr: z.boolean().default(false),
   surfaceContext: z.boolean().default(true),
   publicUrl: z.transform(z.string(), value => parsePublicUrl(value).href),
 })
@@ -171,11 +180,21 @@ async function openBrowser(url: string): Promise<void> {
   })
 }
 
-/** Test hooks for the built dist and native browser handoff; production never mutates them. */
+/**
+ * Report a startup failure found after Loader settlement as an unhandled
+ * rejection, which the app's fail-loud handler prints before exiting 1.
+ */
+/* v8 ignore next 3 -- the process-level fail-loud handler owns this rejection; tests replace the hook */
+function failStartup(error: Error): void {
+  void Promise.reject(error)
+}
+
+/** Test hooks for the built dist, native browser handoff, and post-settlement startup failure; production never mutates them. */
 export const internals: {
   resolveDistIndex: () => string
   openBrowser: (url: string) => Promise<void>
-} = { resolveDistIndex, openBrowser }
+  failStartup: (error: Error) => void
+} = { resolveDistIndex, openBrowser, failStartup }
 
 /**
  * Mount the Web runtime: dist serving, the bash runtime variable, the URL
@@ -196,6 +215,18 @@ export function apply(ctx: Context, config: Config): void {
   }
   if (ctx.webServer.protocol === 'http:' && !isLoopbackHost(boundHost)) {
     console.warn(`dsh web: listening on ${boundHost} over plain HTTP; restrict this port to a trusted proxy or network`)
+  }
+  // Every route serving the page, /api, and WebSocket streams authenticates
+  // through Connection. A network listener whose settled tree lacks it would
+  // serve no authenticated surface, so it stops instead of staying bound.
+  if (!isLoopbackHost(boundHost)) {
+    void ctx.get('loader')?.await().then(() => {
+      if (ctx.get('webServer') !== undefined && ctx.get('connection') === undefined) {
+        internals.failStartup(new Error(`web-app: refusing to serve ${boundHost} without browser authentication; enable the connection row or bind 127.0.0.1`))
+      }
+    }).catch(() => {
+      // Boot owns the settlement failure diagnostic.
+    })
   }
   // The bind URL belongs to this host. Under SSH, the operator reaches it
   // through a local forwarding address that this process cannot derive.
@@ -229,6 +260,10 @@ export function apply(ctx: Context, config: Config): void {
         ANNOUNCED_ROOTS.add(connectionCtx.root)
         if (config.printUrl) {
           console.log(`dsh web: ${authenticatedUrl}`)
+          if (config.printQr) {
+            console.log('dsh web: scan with a phone on the same network; anyone holding this link controls this machine')
+            console.log(renderUnicodeCompact(authenticatedUrl))
+          }
         }
         if (handoffBrowser) {
           console.log('dsh web: opening the default browser; pass --no-open to disable')
