@@ -8,6 +8,13 @@ body,
   margin: 0;
 }
 
+/* Mobile browsers size `100%` against the largest viewport, so collapsing
+   toolbars would push the composer below the fold; the dynamic viewport unit
+   tracks the visible area where it is supported. */
+#root {
+  height: 100dvh;
+}
+
 body {
   font-family: var(
     --dsw-font-family,

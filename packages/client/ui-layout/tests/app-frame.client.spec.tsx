@@ -318,7 +318,7 @@ describe('AppFrame normal width concessions', () => {
     expect(frame.querySelector('[data-side="rightbar"]')).toBeNull()
     expect(instance.getSnapshot().layoutInfo).toMatchObject({ rightbarShown: true, rightbar: 864 })
     act(() => { instance.actions.closeRightbar() })
-    resize(455)
+    resize(800)
     expect(tracks(frame)).toEqual([56, 0])
     resize(1920)
     expect(tracks(frame)).toEqual([420, 0])
@@ -336,7 +336,8 @@ describe('AppFrame normal width concessions', () => {
     expect(rightOwner().canShow).toBe(true)
   })
 
-  it.each([[756, 300, true], [755, 0, false]] as const)('reports eligibility at %ipx', (width, rightbar, canShow) => {
+  // Below the compact breakpoint the sidebar has no track at all.
+  it.each([[700, 300, true], [699, 0, false]] as const)('reports eligibility at %ipx', (width, rightbar, canShow) => {
     frameWidth = width
     const { instance, rightOwner } = mountFrame()
     act(() => { instance.actions.toggleSidebar() })
@@ -506,11 +507,11 @@ describe('AppFrame right panel presentation', () => {
   })
 
   it('retains fullscreen without a track when normal columns cannot fit', () => {
-    frameWidth = 700
+    frameWidth = 650
     const { frame, instance, rightOwner } = mountFrame()
     act(() => { instance.actions.openRightbar(false, true) })
-    expect(tracks(frame)).toEqual([56, 0])
-    expect(rightOwner()).toEqual({ width: 0, viewportWidth: 700, canShow: false })
+    expect(tracks(frame)).toEqual([0, 0])
+    expect(rightOwner()).toEqual({ width: 0, viewportWidth: 650, canShow: false })
     expect(instance.getSnapshot().layoutInfo.rightbarShown).toBe(true)
     expect(frame.querySelector('[data-side="rightbar"]')).toBeNull()
   })
@@ -637,6 +638,79 @@ describe('AppFrame pointer resizing', () => {
     expect(animationFrames.size).toBe(0)
     expect(handle.hasPointerCapture(1)).toBe(false)
     if (change !== 'unmount') expect(frame.dataset.dragging).toBeUndefined()
+  })
+})
+
+describe('AppFrame compact drawer', () => {
+  it('gives the phone sidebar no track and mounts the reopen seat while closed', () => {
+    frameWidth = 390
+    const { frame, sidebarOwner, queryByTestId } = mountFrame()
+    expect(tracks(frame)).toEqual([0, 0])
+    expect(frame.dataset.compact).toBe('true')
+    expect(frame.dataset.drawerOpen).toBeUndefined()
+    expect(sidebarOwner()).toEqual({ collapsed: true, width: 280 })
+    expect(queryByTestId('shell.leading-content')).toBeTruthy()
+    expect(frame.querySelector('[data-shell-drawer-scrim]')).toBeNull()
+  })
+
+  it('opens an overlay drawer capped at 85% of the viewport without a resize handle', () => {
+    frameWidth = 300
+    const { frame, instance, sidebarOwner, queryByTestId } = mountFrame()
+    act(() => { instance.actions.toggleSidebar() })
+    expect(tracks(frame)).toEqual([0, 0])
+    expect(frame.dataset.drawerOpen).toBe('true')
+    expect(frame.style.getPropertyValue('--dsh-frame-drawer-width')).toBe('255px')
+    expect(sidebarOwner()).toEqual({ collapsed: false, width: 255 })
+    expect(queryByTestId('shell.leading-content')).toBeNull()
+    expect(frame.querySelector('[data-side="sidebar"]')).toBeNull()
+  })
+
+  it('keeps the stored sidebar width when it fits the phone', () => {
+    frameWidth = 700
+    const { instance, sidebarOwner } = mountFrame()
+    act(() => { instance.actions.setSidebar(300); instance.actions.toggleSidebar() })
+    expect(sidebarOwner()).toEqual({ collapsed: false, width: 300 })
+  })
+
+  it('closes the drawer from the scrim and from an unhandled Escape', () => {
+    frameWidth = 390
+    const { frame, instance } = mountFrame()
+    act(() => { instance.actions.toggleSidebar() })
+    act(() => { frame.querySelector<HTMLElement>('[data-shell-drawer-scrim]')!.click() })
+    expect(frame.dataset.drawerOpen).toBeUndefined()
+    act(() => { instance.actions.toggleSidebar() })
+    const handled = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true })
+    handled.preventDefault()
+    act(() => { window.dispatchEvent(handled) })
+    act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' })) })
+    expect(frame.dataset.drawerOpen).toBe('true')
+    act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })) })
+    expect(frame.dataset.drawerOpen).toBeUndefined()
+    act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })) })
+    expect(frame.dataset.drawerOpen).toBeUndefined()
+  })
+
+  it('closes the drawer when a panel or another Session takes the main view', () => {
+    frameWidth = 390
+    const { frame, instance, rerenderFrame } = mountFrame()
+    act(() => { instance.actions.toggleSidebar() })
+    rerenderFrame()
+    expect(frame.dataset.drawerOpen).toBe('true')
+    act(() => { instance.actions.selectPanel('panel-a' as MainPanelId) })
+    expect(frame.dataset.drawerOpen).toBeUndefined()
+    act(() => { instance.actions.toggleSidebar() })
+    selectedSession = 's-other' as SessionId
+    act(rerenderFrame)
+    expect(frame.dataset.drawerOpen).toBeUndefined()
+  })
+
+  it('returns to the rail at tablet widths', () => {
+    frameWidth = 390
+    const { frame, sidebarOwner } = mountFrame()
+    resize(768)
+    expect(frame.dataset.compact).toBeUndefined()
+    expect(tracks(frame)).toEqual([56, 0])
+    expect(sidebarOwner()).toEqual({ collapsed: true, width: 56 })
   })
 })
 
